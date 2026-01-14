@@ -129,18 +129,27 @@ def algo_a_overload(lf: pl.LazyFrame) -> pl.DataFrame:
 # 3. [알고리즘 B] 이상 전류 검지 (통계)
 # ==========================================
 def algo_b_anomaly(lf: pl.LazyFrame) -> pl.LazyFrame:
-    """ 4-1. 통계적 이상치 (|값 - 평균| / 평균 > 0.25) """
+    """
+    4-1. 통계적 이상치
+    - 나를 제외한 평균보다 25% 이상 큰 경우만 검출
+    - 공식: (내값 - 평균) / 평균 > 0.25
+    """
     return (
         lf.with_columns([
+            # 1. 그룹별 합계와 개수 구하기
             pl.col("value").sum().over(["fleet_id", "car_no"]).alias("grp_sum"),
             pl.col("value").count().over(["fleet_id", "car_no"]).alias("grp_cnt")
         ])
         .with_columns(
+            # 2. 나를 제외한(Leave-One-Out) 평균 계산
             ((pl.col("grp_sum") - pl.col("value")) / (pl.col("grp_cnt") - 1)).alias("loo_mean")
         )
+        # 평균이 없거나 0인 경우 제외 (나누기 0 방지)
         .filter(pl.col("loo_mean").is_not_null() & (pl.col("loo_mean") != 0))
         .filter(
-            ((pl.col("value") - pl.col("loo_mean")).abs() / pl.col("loo_mean")) > 0.25
+            # [수정된 부분] .abs()를 제거하여 양의 방향(큰 경우)만 체크
+            # 내 값이 평균보다 25% 초과하여 큰 경우
+            ((pl.col("value") - pl.col("loo_mean")) / pl.col("loo_mean")) > 0.25
         )
         .select([
             pl.col("oper_datetime"),
@@ -165,13 +174,13 @@ if __name__ == "__main__":
 
     base_lf = preprocess_lazy_frame(csv_file)
 
-    print("- 알고리즘 A-1 (과전류) 분석 중...")
+    print("- SIV 출력전류 과전류 분석 중...")
     res_a1 = algo_a_overcurrent(base_lf).collect(engine="streaming")
 
-    print("- 알고리즘 A-2 (과부하-시간연속) 분석 중...")
+    print("- SIV 출력전류 과부하-시간연속 분석 중...")
     res_a2 = algo_a_overload(base_lf)
 
-    print("- 알고리즘 B (이상전류-통계) 분석 중...")
+    print("- SIV 출력전류 이상전류 분석 중...")
     res_b = algo_b_anomaly(base_lf).collect(engine="streaming")
 
     # 결과 합치기
@@ -188,9 +197,9 @@ if __name__ == "__main__":
     print("\n" + "="*40)
     print("       📊 데이터 분석 결과 요약")
     print("="*40)
-    print(f" 1. 알고리즘 A-1 (과전류)   : {count_a1:>5} 건")
-    print(f" 2. 알고리즘 A-2 (과부하)   : {count_a2:>5} 건")
-    print(f" 3. 알고리즘 B   (이상전류) : {count_b:>5} 건")
+    print(f" 1. SIV 출력전류 과전류   : {count_a1:>5} 건")
+    print(f" 2. SIV 출력전류 과부하   : {count_a2:>5} 건")
+    print(f" 3. SIV 출력전류 이상전류 : {count_b:>5} 건")
     print("-" * 40)
     print(f"    총 이벤트 발생 건수     : {total_count:>5} 건")
     print("="*40)
